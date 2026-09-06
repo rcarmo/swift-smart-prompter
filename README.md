@@ -2,7 +2,9 @@
 
 ![Smart Prompter icon](docs/icon-256.png)
 
-Smart Prompter is a local-first macOS 26 call coach. Its separate cue panel floats above video-call windows while the main window handles setup, transcripts, and talking points. The app transcribes microphone and system audio as separate speakers and uses Apple Intelligence to suggest a short next response.
+I originally meant Smart Prompter to be a little demo of how much useful work Apple's on-device speech and language models can do, even on relatively low-end hardware. Then my NLP background got involved and the scope got a little out of hand--separate microphone and call-audio capture, multilingual transcription, fuzzy topic matching, model-assisted coverage tracking and a floating cue window all followed.
+
+The app listens during video calls, follows a script of talking points and suggests a short next response. Its separate cue panel floats above the call while the main window handles setup, transcripts and manual corrections. Audio and transcripts stay on the Mac.
 
 ![Smart Prompter showing its floating cue and active talking points](docs/screenshot.png)
 
