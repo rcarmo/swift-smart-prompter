@@ -20,6 +20,9 @@ private struct CoachAdvice {
 
     @Guide(description: "The one-based number of the still-active point that wordsToSay advances. Prefer earlier points when relevance is otherwise similar, but allow a later point when it clearly fits the conversation better. Return zero when wordsToSay only answers the other speaker.")
     var targetPointNumber: Int
+
+    @Guide(description: "True when wordsToSay would ask about, restate, or return to any point in the closed-points exclusion list; otherwise false.")
+    var revisitsClosedPoint: Bool
 }
 
 @MainActor
@@ -71,6 +74,7 @@ final class AppModel {
     private var recentCues: [String] = []
     private var manuallyUncoveredTopicIDs = Set<UUID>()
     private var translatedTopicTexts: [UUID: String] = [:]
+    private var coverageTranscript: [TranscriptLine] = []
     private static let scriptKey = "talkingPoints"
     private static let localeKey = "speechLocale"
     private static let microphoneKey = "microphoneDeviceID"
@@ -165,6 +169,7 @@ final class AppModel {
 
         topics = parsedTopics
         transcript = []
+        coverageTranscript = []
         recentCues = []
         lastRepliedCallID = nil
         manuallyUncoveredTopicIDs = []
@@ -257,18 +262,23 @@ final class AppModel {
     private func receiveTranscript(speaker: Speaker, text: String, isFinal: Bool) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        if let index = transcript.lastIndex(where: { $0.speaker == speaker && !$0.isFinal }) {
-            transcript[index].text = text
-            transcript[index].isFinal = isFinal
-        } else {
-            transcript.append(TranscriptLine(speaker: speaker, text: text, isFinal: isFinal))
-        }
-        if transcript.count > 12 {
-            transcript.removeFirst(transcript.count - 12)
-        }
+        Self.updateTranscript(
+            &transcript,
+            speaker: speaker,
+            text: text,
+            isFinal: isFinal,
+            limit: 12
+        )
+        Self.updateTranscript(
+            &coverageTranscript,
+            speaker: speaker,
+            text: text,
+            isFinal: isFinal,
+            limit: 60
+        )
         suggestionLabel = speaker == .call ? "REPLY NOW" : "NEXT POINT"
 
-        let combined = transcript.map(\.text).joined(separator: " ")
+        let combined = coverageTranscript.map(\.text).joined(separator: " ")
         let languageCode = Locale(identifier: localeIdentifier).language.languageCode?.identifier
         var newlyCovered = Set<UUID>()
         for index in topics.indices
@@ -309,6 +319,9 @@ final class AppModel {
         let recentTranscript = transcript.suffix(8)
             .map { "\($0.speaker.rawValue): \($0.text)" }
             .joined(separator: "\n")
+        let coverageEvidence = coverageTranscript.suffix(24)
+            .map { "\($0.speaker.rawValue): \($0.text)" }
+            .joined(separator: "\n")
         let latestTranscriptLineID = transcript.last?.id
         let latestTranscriptSpeaker = transcript.last?.speaker
         let remainingTopics = uncoveredTopics
@@ -322,12 +335,19 @@ final class AppModel {
                 return "\(number). \(topic.text)\n   In the conversation language: \(translated)"
             }
             .joined(separator: "\n")
+        let closed = topics.filter(\.isCovered)
+            .map { topic in
+                translatedTopicTexts[topic.id] ?? topic.text
+            }
+            .joined(separator: "\n- ")
         let priorCues = recentCues.suffix(6).joined(separator: "\n- ")
 
         let session = LanguageModelSession(instructions: """
         Write only the exact words the user could naturally say next in a live call.
         Write in the language identified by locale \(localeIdentifier), matching the recent conversation.
         The script and conversation may use different languages. Compare their meaning across languages, using any supplied conversation-language version of a point as an aid rather than as a separate point.
+        Before drafting wordsToSay, compare every numbered active point with the full session coverage evidence. Put every directly covered point in coveredPointNumbers and exclude it from cue selection. This classification takes precedence over continuing the current subject.
+        Closed points are a strict exclusion list. Never ask about, restate, return to, or generate a transition towards one. Set revisitsClosedPoint to true whenever wordsToSay does so, even indirectly.
         If the latest Call utterance asks a question, makes a request, or raises an objection, respond to it first.
         Use only facts present in the script or transcript. When a fact is missing, ask a short clarifying question.
         Otherwise, move the conversation to the most relevant point the user still needs to discuss.
@@ -337,6 +357,7 @@ final class AppModel {
         Return target point zero only for a direct reply to the latest Call utterance. Otherwise select one numbered active point.
         A point is covered only when the recent conversation directly states, explains, or answers its core subject. Similar context alone does not count. When uncertain, leave it uncovered. Mark no more than two points per update.
         The target point must remain uncovered and must not also appear in coveredPointNumbers.
+        A direct reply must not reopen or restate a point identified as covered. Answer only new information, or bridge to a still-active point and return its number.
         Never use a person's name or an uncommon proper noun from the transcript.
         Never explain why the sentence is useful. Never introduce the sentence. Never mention points, scripts, coaching, or transitions.
         """)
@@ -344,6 +365,12 @@ final class AppModel {
             let response = try await session.respond(to: """
             Numbered uncovered points:
             \(remaining)
+
+            Closed points that must never produce another cue:
+            \(closed.isEmpty ? "None." : "- \(closed)")
+
+            Session evidence to use when classifying covered points:
+            \(coverageEvidence.isEmpty ? "The call has just started." : coverageEvidence)
 
             Recent conversation:
             \(recentTranscript.isEmpty ? "The call has just started." : recentTranscript)
@@ -366,7 +393,15 @@ final class AppModel {
                 showNextUncoveredFallback()
             }
 
-            guard let cue = CueSanitizer.usableCue(from: response.content.wordsToSay),
+            // A response based on a larger active set is stale as soon as it closes a point.
+            // Generate the next cue from the reduced set instead of trying to salvage it.
+            if !modelCoveredTopicIDs.isEmpty {
+                scheduleAdvice()
+                return
+            }
+
+            guard !response.content.revisitsClosedPoint,
+                  let cue = CueSanitizer.usableCue(from: response.content.wordsToSay),
                   !CueSanitizer.isNearDuplicate(cue, of: recentCues)
             else { return }
 
@@ -411,6 +446,24 @@ final class AppModel {
             suggestionTopicID = nil
         }
         suggestionIsGenerated = false
+    }
+
+    private static func updateTranscript(
+        _ lines: inout [TranscriptLine],
+        speaker: Speaker,
+        text: String,
+        isFinal: Bool,
+        limit: Int
+    ) {
+        if let index = lines.lastIndex(where: { $0.speaker == speaker && !$0.isFinal }) {
+            lines[index].text = text
+            lines[index].isFinal = isFinal
+        } else {
+            lines.append(TranscriptLine(speaker: speaker, text: text, isFinal: isFinal))
+        }
+        if lines.count > limit {
+            lines.removeFirst(lines.count - limit)
+        }
     }
 
     private func failCapture(message: String) async {
