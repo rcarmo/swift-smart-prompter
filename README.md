@@ -16,6 +16,35 @@ The app listens during video calls, follows a script of talking points and sugge
 
 No cloud API or account is required. Audio and transcripts are not written to disk.
 
+## Install Apple language components
+
+Smart Prompter uses separate macOS components for transcription, translation and contextual coaching. Installing a Dictation language does not install its Translation model.
+
+### Speech transcription
+
+1. Open **System Settings → Keyboard**.
+2. Under **Dictation**, click **Edit** next to Languages.
+3. Select each language and region that Smart Prompter should transcribe.
+
+Apple describes this process in [Dictate messages and documents on Mac](https://support.apple.com/guide/mac-help/mh40584/mac).
+
+### On-device translation
+
+Install translation models when the script and conversation may use different languages:
+
+1. Open **System Settings → General → Language & Region**.
+2. Click **Translation Languages**.
+3. Download both the script language and conversation language.
+4. Enable **On-Device Mode**, then click **Done**.
+
+Smart Prompter detects the script language and translates its topics once at the start of a listening session. It uses only an already-installed language pair and falls back to the original topics when that pair is unavailable. See Apple's [offline translation instructions](https://support.apple.com/guide/mac-help/mchldd8b3c15/mac).
+
+### Apple Intelligence and Natural Language
+
+Enable Apple Intelligence under **System Settings → Apple Intelligence & Siri** to generate contextual cues and classify covered topics.
+
+macOS bundles the older `NLTagger` lemma and `NLEmbedding` models only for supported languages. They have no separate installation control. Smart Prompter uses lemmatisation when available and otherwise applies its conservative token matcher; it does not require downloadable contextual-embedding assets.
+
 ## Build and run
 
 ```sh

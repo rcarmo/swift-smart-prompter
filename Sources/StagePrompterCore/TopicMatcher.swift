@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 public enum TopicMatcher {
     private static let commonStopWords: Set<String> = [
@@ -24,7 +25,7 @@ public enum TopicMatcher {
         let topicTokens = significantTokens(in: topic, languageCode: languageCode)
         guard !topicTokens.isEmpty else { return false }
 
-        let transcriptTokens = Set(tokens(in: transcript).map(canonicalToken))
+        let transcriptTokens = Set(tokens(in: transcript, languageCode: languageCode).map(canonicalToken))
         let matches = topicTokens.filter { topicToken in
             transcriptTokens.contains { transcriptToken in
                 tokensAreRelated(topicToken, transcriptToken)
@@ -39,7 +40,7 @@ public enum TopicMatcher {
         languageCode: String? = nil
     ) -> Set<String> {
         let stopWords = commonStopWords.union(localeStopWords[languageCode ?? ""] ?? [])
-        return Set(tokens(in: text)
+        return Set(tokens(in: text, languageCode: languageCode)
             .filter { !stopWords.contains($0) && $0.count > 2 }
             .map(canonicalToken))
     }
@@ -52,30 +53,49 @@ public enum TopicMatcher {
     }
 
     private static func canonicalToken(_ token: String) -> String {
-        switch token {
-        case "ownership", "owner", "owned", "owns": return "own"
-        case "timing", "timeline", "schedule", "scheduled", "scheduling": return "time"
-        case "decisions", "decided", "deciding": return "decide"
-        case "limitations", "limitation", "restrictions", "restriction": return "constraint"
-        case "objective", "objectives", "purpose": return "goal"
-        case "advantages", "advantage", "benefits", "value": return "benefit"
-        case "method", "methods", "plan", "plans": return "approach"
-        case "situation", "current": return "status"
-        default:
-            if token.hasSuffix("ies"), token.count > 5 {
-                return String(token.dropLast(3)) + "y"
-            }
-            if token.hasSuffix("s"), token.count > 4 {
-                return String(token.dropLast())
-            }
-            return token
+        if token.hasSuffix("ies"), token.count > 5 {
+            return String(token.dropLast(3)) + "y"
         }
+        if token.hasSuffix("s"), token.count > 4 {
+            return String(token.dropLast())
+        }
+        return token
     }
 
-    private static func tokens(in text: String) -> [String] {
-        text.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+    private static func tokens(in text: String, languageCode: String?) -> [String] {
+        let normalized = text.folding(
+            options: [.diacriticInsensitive, .caseInsensitive],
+            locale: Locale(identifier: languageCode ?? Locale.current.identifier)
+        )
             .lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+        guard let languageCode else { return basicTokens(in: normalized) }
+
+        let language = NLLanguage(rawValue: languageCode)
+        guard NLTagger.availableTagSchemes(for: .word, language: language).contains(.lemma) else {
+            return basicTokens(in: normalized)
+        }
+
+        let tagger = NLTagger(tagSchemes: [.lemma])
+        tagger.string = normalized
+        tagger.setLanguage(language, range: normalized.startIndex..<normalized.endIndex)
+        var result: [String] = []
+        tagger.enumerateTags(
+            in: normalized.startIndex..<normalized.endIndex,
+            unit: .word,
+            scheme: .lemma,
+            options: [.omitPunctuation, .omitWhitespace]
+        ) { tag, range in
+            let token = tag?.rawValue ?? String(normalized[range])
+            if !token.isEmpty {
+                result.append(token)
+            }
+            return true
+        }
+        return result
+    }
+
+    private static func basicTokens(in text: String) -> [String] {
+        text.components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
     }
 }

@@ -25,11 +25,11 @@ struct TopicMatcherTests {
         ))
     }
 
-    @Test("Common call-language synonyms cover a point")
-    func recognisesParaphrasedTopic() {
+    @Test("The matcher does not depend on the sample script's vocabulary")
+    func recognisesArbitraryTopic() {
         #expect(TopicMatcher.isCovered(
-            topic: "Discuss timing and ownership",
-            by: "Could you tell me about the project timeline and who will own the next steps?"
+            topic: "Review observability dashboards",
+            by: "Next, we reviewed all of the observability dashboards."
         ))
     }
 

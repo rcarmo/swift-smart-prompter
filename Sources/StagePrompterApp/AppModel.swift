@@ -70,6 +70,7 @@ final class AppModel {
     private var lastRepliedCallID: UUID?
     private var recentCues: [String] = []
     private var manuallyUncoveredTopicIDs = Set<UUID>()
+    private var translatedTopicTexts: [UUID: String] = [:]
     private static let scriptKey = "talkingPoints"
     private static let localeKey = "speechLocale"
     private static let microphoneKey = "microphoneDeviceID"
@@ -167,16 +168,24 @@ final class AppModel {
         recentCues = []
         lastRepliedCallID = nil
         manuallyUncoveredTopicIDs = []
+        translatedTopicTexts = [:]
         suggestionLabel = "OPEN WITH"
         suggestion = parsedTopics[0].text
         suggestionTopicID = parsedTopics[0].id
         suggestionIsGenerated = false
-        transcriptionStatus = "Requesting audio access…"
         state = .starting
+        transcriptionStatus = "Preparing topic language…"
+        translatedTopicTexts = await TopicLanguageAdapter.translations(
+            for: parsedTopics,
+            script: script,
+            targetLocale: Locale(identifier: localeIdentifier)
+        )
+        suggestion = translatedTopicTexts[parsedTopics[0].id] ?? parsedTopics[0].text
+        transcriptionStatus = "Requesting audio access…"
         do {
             try await capture.start(
                 localeIdentifier: localeIdentifier,
-                contextualStrings: parsedTopics.map(\.text),
+                contextualStrings: parsedTopics.map { translatedTopicTexts[$0.id] ?? $0.text },
                 microphoneDeviceID: selectedMicrophoneID == AudioSourceCatalog.systemDefaultMicrophoneID
                     ? nil
                     : selectedMicrophoneID,
@@ -267,7 +276,7 @@ final class AppModel {
                 && !manuallyUncoveredTopicIDs.contains(topics[index].id)
         {
             if TopicMatcher.isCovered(
-                topic: topics[index].text,
+                topic: translatedTopicTexts[topics[index].id] ?? topics[index].text,
                 by: combined,
                 languageCode: languageCode
             ) {
@@ -305,13 +314,20 @@ final class AppModel {
         let remainingTopics = uncoveredTopics
         guard !remainingTopics.isEmpty else { return }
         let remaining = remainingTopics.enumerated()
-            .map { "\($0.offset + 1). \($0.element.text)" }
+            .map { offset, topic in
+                let number = offset + 1
+                guard let translated = translatedTopicTexts[topic.id],
+                      translated.localizedCaseInsensitiveCompare(topic.text) != .orderedSame
+                else { return "\(number). \(topic.text)" }
+                return "\(number). \(topic.text)\n   In the conversation language: \(translated)"
+            }
             .joined(separator: "\n")
         let priorCues = recentCues.suffix(6).joined(separator: "\n- ")
 
         let session = LanguageModelSession(instructions: """
         Write only the exact words the user could naturally say next in a live call.
         Write in the language identified by locale \(localeIdentifier), matching the recent conversation.
+        The script and conversation may use different languages. Compare their meaning across languages, using any supplied conversation-language version of a point as an aid rather than as a separate point.
         If the latest Call utterance asks a question, makes a request, or raises an objection, respond to it first.
         Use only facts present in the script or transcript. When a fact is missing, ask a short clarifying question.
         Otherwise, move the conversation to the most relevant point the user still needs to discuss.
@@ -388,7 +404,7 @@ final class AppModel {
 
     private func showNextUncoveredFallback() {
         if let next = uncoveredTopics.first {
-            suggestion = next.text
+            suggestion = translatedTopicTexts[next.id] ?? next.text
             suggestionTopicID = next.id
         } else {
             suggestion = "All points are covered. Confirm decisions, owners, and timing."
