@@ -51,6 +51,26 @@ struct TopicMatcherTests {
         ))
     }
 
+    @Test("A later point requires verbatim, topic-related evidence")
+    func validatesOrderOverrideEvidence() {
+        let transcript = "Before we finish, can we agree on the delivery window?"
+        #expect(TopicSelectionPolicy.allowsOrderOverride(
+            topic: "Agree delivery window and dependencies",
+            evidence: "delivery window",
+            recentTranscript: transcript
+        ))
+        #expect(!TopicSelectionPolicy.allowsOrderOverride(
+            topic: "Agree delivery window and dependencies",
+            evidence: "budget approval",
+            recentTranscript: transcript
+        ))
+        #expect(!TopicSelectionPolicy.allowsOrderOverride(
+            topic: "Review security requirements",
+            evidence: "delivery window",
+            recentTranscript: transcript
+        ))
+    }
+
     @Test("A spoken cue is accepted without changing it")
     func acceptsSpokenCue() {
         #expect(CueSanitizer.usableCue(from: "What timing would work best for your team?") == "What timing would work best for your team?")

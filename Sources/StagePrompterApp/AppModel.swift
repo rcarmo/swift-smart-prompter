@@ -23,6 +23,9 @@ private struct CoachAdvice {
 
     @Guide(description: "True when wordsToSay would ask about, restate, or return to any point in the closed-points exclusion list; otherwise false.")
     var revisitsClosedPoint: Bool
+
+    @Guide(description: "When targetPointNumber is greater than one, an exact short phrase copied verbatim from the recent conversation that makes this later point clearly more relevant than every earlier active point. Otherwise an empty string.")
+    var orderOverrideEvidence: String
 }
 
 @MainActor
@@ -352,6 +355,7 @@ final class AppModel {
         Use only facts present in the script or transcript. When a fact is missing, ask a short clarifying question.
         Otherwise, move the conversation to the most relevant point the user still needs to discuss.
         Script order expresses priority. Prefer an earlier active point when candidates fit the conversation equally well, but choose a later point when it is clearly more relevant.
+        Treat the first numbered active point as the default. Select a later point only when the recent conversation contains explicit language about it. When doing so, copy the shortest supporting phrase verbatim into orderOverrideEvidence. Never invent or paraphrase this evidence.
         Do not repeat a checklist item verbatim. Use one conversational sentence, no more than 24 words.
         Do not repeat any recent cue. Advance to another uncovered point instead.
         Return target point zero only for a direct reply to the latest Call utterance. Otherwise select one numbered active point.
@@ -420,6 +424,22 @@ final class AppModel {
                 let candidateID = remainingTopics[targetIndex].id
                 guard topics.contains(where: { $0.id == candidateID && !$0.isCovered }) else {
                     return
+                }
+                if targetIndex > 0 {
+                    let languageCode = Locale(identifier: localeIdentifier)
+                        .language.languageCode?.identifier
+                    let targetText = translatedTopicTexts[candidateID]
+                        ?? remainingTopics[targetIndex].text
+                    guard TopicSelectionPolicy.allowsOrderOverride(
+                        topic: targetText,
+                        evidence: response.content.orderOverrideEvidence,
+                        recentTranscript: recentTranscript,
+                        languageCode: languageCode
+                    ) else {
+                        suggestionLabel = "NEXT POINT"
+                        showNextUncoveredFallback()
+                        return
+                    }
                 }
                 guard candidateID != suggestionTopicID || !suggestionIsGenerated else { return }
                 targetTopicID = candidateID

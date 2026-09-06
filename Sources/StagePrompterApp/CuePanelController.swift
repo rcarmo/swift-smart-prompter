@@ -83,13 +83,17 @@ private struct CuePanelView: View {
                 .accessibilityLabel("Hide cue")
             }
 
-            Text(model.suggestion)
-                .font(.system(size: 27, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(6)
-                .minimumScaleFactor(0.72)
-                .contentTransition(.opacity)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            ScrollView(.vertical) {
+                Text(model.suggestion)
+                    .font(.system(size: 27, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .contentTransition(.opacity)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .scrollIndicators(.automatic)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .padding(15)
         .background {

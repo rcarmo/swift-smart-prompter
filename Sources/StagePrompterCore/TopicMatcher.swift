@@ -45,6 +45,21 @@ public enum TopicMatcher {
             .map(canonicalToken))
     }
 
+    public static func hasSignificantOverlap(
+        topic: String,
+        text: String,
+        languageCode: String? = nil
+    ) -> Bool {
+        let topicTokens = significantTokens(in: topic, languageCode: languageCode)
+        guard !topicTokens.isEmpty else { return false }
+        let textTokens = Set(tokens(in: text, languageCode: languageCode).map(canonicalToken))
+        return topicTokens.contains { topicToken in
+            textTokens.contains { textToken in
+                tokensAreRelated(topicToken, textToken)
+            }
+        }
+    }
+
     private static func tokensAreRelated(_ left: String, _ right: String) -> Bool {
         if left == right { return true }
         let shorterCount = min(left.count, right.count)
